@@ -4,12 +4,14 @@
 """Fixed-base ``galbot_one_golf`` dual-arm robot configuration."""
 
 import os
+from collections.abc import Sequence
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg
-from isaaclab.sensors import TiledCameraCfg
+from isaaclab.sensors import TiledCamera, TiledCameraCfg
 from isaaclab.utils import configclass
+from pxr import Gf, Sdf
 
 from robolab.constants import ROBOTS_DIR
 from robolab.robots.galbot_golf_definitions import *  # noqa
@@ -70,28 +72,70 @@ def _source_replay_camera(
     )
 
 
+class _WristCamera(TiledCamera):
+    """Render and report the independently resized wrist focal lengths."""
+
+    def __init__(self, cfg: TiledCameraCfg) -> None:
+        super().__init__(cfg)
+        # RTX's default pinhole and IsaacLab's intrinsic reporting assume
+        # square pixels. OpenCV pinhole preserves fx != fy after resizing.
+        for prim in sim_utils.find_matching_prims(cfg.prim_path):
+            # Author the schema and attributes explicitly: headless Kit apps
+            # need not have registered the optional schema's USD fallbacks.
+            prim.AddAppliedSchema("OmniLensDistortionOpenCvPinholeAPI")
+            prim.CreateAttribute("omni:lensdistortion:model", Sdf.ValueTypeNames.Token).Set("opencvPinhole")
+            parameters = {
+                "fx": cfg.width * cfg.spawn.focal_length / cfg.spawn.horizontal_aperture,
+                "fy": cfg.height * cfg.spawn.focal_length / cfg.spawn.vertical_aperture,
+                "cx": cfg.width / 2,
+                "cy": cfg.height / 2,
+                **dict.fromkeys(("k1", "k2", "k3", "k4", "k5", "k6", "p1", "p2", "s1", "s2", "s3", "s4"), 0.0),
+            }
+            for name, value in parameters.items():
+                prim.CreateAttribute(f"omni:lensdistortion:opencvPinhole:{name}", Sdf.ValueTypeNames.Float).Set(value)
+            prim.CreateAttribute("omni:lensdistortion:opencvPinhole:imageSize", Sdf.ValueTypeNames.Int2).Set(
+                Gf.Vec2i(cfg.width, cfg.height)
+            )
+
+    def _update_intrinsic_matrices(self, env_ids: Sequence[int]) -> None:
+        super()._update_intrinsic_matrices(env_ids)
+        for index in env_ids:
+            prim = self._sensor_prims[index].GetPrim()
+            self._data.intrinsic_matrices[index, 1, 1] = prim.GetAttribute(
+                "omni:lensdistortion:opencvPinhole:fy"
+            ).Get()
+
+
 def _wrist_camera(side: str) -> TiledCameraCfg:
-    """Camera parented to Golf's URDF camera frame, using its +Z optical axis."""
+    """Yundonghui policy calibration resized from 400x224 to 640x360."""
+    # SynthNova extensions/yundonghui/src/synthnova_yundonghui/cameras.py:
+    # ROS optical pose relative to the arm end-effector mount, quaternion XYZW.
+    mount_pos = (0.07089459385344977, 0.011084636915734618, 0.0475356786953811)
+    mount_quat = (-0.5921350168801781, 0.5860286987303605, -0.38397145780165504, 0.3981361647004496)
+    if side == "right":
+        mount_quat = tuple(-value for value in mount_quat)
+    x, y, z, w = mount_quat
+    # arm_link7 -> mount: translation (-0.10926, 0, 0), rotation Ry(pi).
+    # Attach directly to the moving rigid body so Fabric updates the camera;
+    # compose the mount transform and convert XYZW to IsaacLab's WXYZ order.
     return TiledCameraCfg(
-        prim_path=(
-            f"{{ENV_REGEX_NS}}/robot/{side}_arm_link7/"
-            f"{side}_arm_wrist_camera_stand/{side}_wrist_camera_link/{side}_wrist_cam"
-        ),
-        height=224,
-        width=400,
+        class_type=_WristCamera,
+        prim_path=f"{{ENV_REGEX_NS}}/robot/{side}_arm_link7/{side}_wrist_cam",
+        height=360,
+        width=640,
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(
+            # Keep the source film gate: fx=202*640/400, fy=202*360/224,
+            # with centered principal point (320, 180) after resizing.
             focal_length=202 * 0.03,
             focus_distance=0.0,
             horizontal_aperture=400 * 0.03,
             vertical_aperture=224 * 0.03,
             clipping_range=(0.03, 10.0),
         ),
-        # The URDF camera link supplies the optical +Z direction, but its image
-        # axes are rolled 90 degrees relative to the upright D405 recording.
         offset=TiledCameraCfg.OffsetCfg(
-            pos=(0.0, 0.0, 0.0),
-            rot=(0.7071067812, 0.0, 0.0, 0.7071067812),
+            pos=(-0.10926 - mount_pos[0], mount_pos[1], -mount_pos[2]),
+            rot=(-y, z, w, -x),
             convention="ros",
         ),
     )

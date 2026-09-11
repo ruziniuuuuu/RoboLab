@@ -4,7 +4,7 @@
 """Focused contracts for the fixed-base Galbot One Golf embodiment."""
 
 import pytest
-from pxr import Usd
+from pxr import Gf, Usd, UsdGeom, UsdShade
 
 from robolab.constants import TASK_DIR
 from robolab.core.environments.config import generate_scene_env_cfg
@@ -71,15 +71,54 @@ def test_left_ego_camera_uses_policy_calibration():
     )
 
 
-def test_wrist_cameras_use_golf_sensor_calibration():
+def test_wrist_cameras_use_resized_yundonghui_calibration():
     left = GalbotGolfLeftWristCameraCfg().left_wrist_cam
     right = GalbotGolfRightWristCameraCfg().right_wrist_cam
-    assert (left.width, left.height) == (400, 224)
-    assert (right.width, right.height) == (400, 224)
+    assert (left.width, left.height) == (640, 360)
+    assert (right.width, right.height) == (640, 360)
     for camera in (left, right):
-        assert camera.width * camera.spawn.focal_length / camera.spawn.horizontal_aperture == pytest.approx(202)
-        assert camera.height * camera.spawn.focal_length / camera.spawn.vertical_aperture == pytest.approx(202)
+        assert camera.width * camera.spawn.focal_length / camera.spawn.horizontal_aperture == pytest.approx(323.2)
+        assert camera.height * camera.spawn.focal_length / camera.spawn.vertical_aperture == pytest.approx(
+            324.64285714285717
+        )
+        assert camera.spawn.horizontal_aperture_offset == 0.0
+        assert camera.spawn.vertical_aperture_offset == 0.0
         assert camera.spawn.clipping_range == pytest.approx((0.03, 10.0))
+        assert camera.offset.convention == "ros"
+
+    # Compare the composed optical frame with the source mount-relative pose,
+    # using the actual USD mount transform rather than repeating its conversion.
+    stage = Usd.Stage.Open(GALBOT_GOLF_USD_PATH)
+    cache = UsdGeom.XformCache()
+    source_quat = Gf.Quatd(0.3981361647004496, -0.5921350168801781, 0.5860286987303605, -0.38397145780165504)
+    source_pose = Gf.Matrix4d().SetRotate(source_quat)
+    source_pose.SetTranslateOnly(Gf.Vec3d(0.07089459385344977, 0.011084636915734618, 0.0475356786953811))
+    for side, camera in (("left", left), ("right", right)):
+        assert camera.prim_path == f"{{ENV_REGEX_NS}}/robot/{side}_arm_link7/{side}_wrist_cam"
+        body = stage.GetPrimAtPath(f"/galbot_one_golf/{side}_arm_link7")
+        mount = body.GetChild(f"{side}_arm_end_effector_mount_link")
+        expected = source_pose * cache.GetLocalToWorldTransform(mount)
+        actual = Gf.Matrix4d().SetRotate(Gf.Quatd(camera.offset.rot[0], *camera.offset.rot[1:]))
+        actual.SetTranslateOnly(Gf.Vec3d(*camera.offset.pos))
+        actual *= cache.GetLocalToWorldTransform(body)
+        assert Gf.IsClose(actual, expected, 1e-6)
+
+
+def test_wrist_visuals_use_forward_assembly_with_bound_materials():
+    stage = Usd.Stage.Open(GALBOT_GOLF_USD_PATH)
+    for side in ("left", "right"):
+        visuals = stage.GetPrimAtPath(f"/galbot_one_golf/{side}_arm_link7/visuals")
+        assert UsdGeom.Imageable(visuals.GetChild("d405_stand")).ComputeVisibility() == "invisible"
+        camera = visuals.GetChild("d405")
+        assert UsdGeom.Imageable(camera).ComputeVisibility() == "inherited"
+        meshes = [prim for prim in Usd.PrimRange(camera, Usd.TraverseInstanceProxies()) if prim.IsA(UsdGeom.Mesh)]
+        assert {prim.GetName() for prim in meshes} == {
+            "d405_sz073_body", "d405_sz073_black", "d405_sz073_lens"
+        }
+        for mesh in meshes:
+            material = UsdShade.MaterialBindingAPI(mesh).ComputeBoundMaterial()[0]
+            assert material
+            assert material.ComputeSurfaceSource()[0]
 
 
 def test_usd_contains_split_fingertip_collision_meshes():
