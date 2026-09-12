@@ -167,3 +167,48 @@ def test_robot_frame_fixture_pose_composes_with_robot_root():
     assert tuple(asset.init_state.pos) == pytest.approx((0.5, 0.0, 0.0))
     assert tuple(asset.init_state.rot) == pytest.approx((0.0, 0.0, 0.0, 1.0))
     assert table_fixture_asset(None, _FakeRobotCfg) is None
+
+
+def test_gravity_compensation_is_enabled():
+    """disable_gravity must be True to simulate controller-side gravity compensation."""
+    robot = GalbotGolfFixedBaseCfg().robot
+    assert robot.spawn.rigid_props.disable_gravity is True
+
+
+def test_actuator_gains_match_sim2real_profile():
+    """Actuator stiffness, damping and effort limits must match galbot-one-golf-sim2real-v1.
+
+    Left/right arm values are symmetrised; grippers use the hardware effort rating.
+    """
+    robot = GalbotGolfFixedBaseCfg().robot
+    actuators = robot.actuators
+
+    # Shoulder (joints 1–2): highest-torque arm section, ±180 N·m.
+    shoulder = actuators["arm_shoulder"]
+    assert shoulder.effort_limit_sim == pytest.approx(180)
+    assert shoulder.velocity_limit_sim == pytest.approx(3.141593)
+    assert shoulder.stiffness["left_arm_joint1"] == pytest.approx(3500)
+    assert shoulder.stiffness["right_arm_joint1"] == pytest.approx(3500)
+    assert shoulder.stiffness["left_arm_joint2"] == pytest.approx(3400)
+    assert shoulder.damping["left_arm_joint1"] == pytest.approx(100)
+    assert shoulder.damping["right_arm_joint1"] == pytest.approx(100)
+
+    # Elbow (joints 3–4): ±90 N·m, uniform damping.
+    elbow = actuators["arm_elbow"]
+    assert elbow.effort_limit_sim == pytest.approx(90)
+    assert elbow.stiffness["left_arm_joint3"] == pytest.approx(1145)
+    assert elbow.stiffness["right_arm_joint3"] == pytest.approx(1145)
+    assert elbow.damping == pytest.approx(32)
+
+    # Wrist (joints 5–7): ±30 N·m, uniform damping.
+    wrist = actuators["arm_wrist"]
+    assert wrist.effort_limit_sim == pytest.approx(30)
+    assert wrist.stiffness["left_arm_joint5"] == pytest.approx(286)
+    assert wrist.stiffness["right_arm_joint5"] == pytest.approx(286)
+    assert wrist.damping == pytest.approx(8)
+
+    # Grippers: hardware-rated effort limit.
+    grippers = actuators["grippers"]
+    assert grippers.effort_limit_sim == pytest.approx(1.5)
+    assert grippers.stiffness == pytest.approx(77)
+    assert grippers.damping == pytest.approx(4)
