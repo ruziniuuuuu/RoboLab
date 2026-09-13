@@ -27,16 +27,10 @@ physics, none, mujoco), Robot (**none**, robot), Sensor (**none**, sensors).
 
 ## Fingertip contact regions
 
-The fingertip collision regions are synced from upstream commit
-`46c0b7447edc8254e8b44dd669df86fb6985d876` (PR #6). Each finger has two
-1 mm inner pads with static/dynamic friction `1.5/1.5` and three outer shell
-pieces with `0.3/0.2`, all with zero restitution. The pads cover the full inner
-faces and preserve the original collision envelope and gripper opening.
-
-Only the fingertip collisions and materials are updated from that commit;
-the rest of this USD snapshot retains its existing RoboLab configuration.
-Regenerate the contact meshes with the upstream
-`scripts/build_finger_contact_regions.py` when needed.
+Fingertip collisions use upstream revision `46c0b7447edc8254e8b44dd669df86fb6985d876`,
+packed into the existing `usd/payloads/geometries.usd`. The 1 mm inner pads use
+static/dynamic friction `1.5/1.5`; outer shells use `0.3/0.2`, with zero restitution.
+The collision envelope and gripper opening are preserved.
 
 ## LICENSE
 
