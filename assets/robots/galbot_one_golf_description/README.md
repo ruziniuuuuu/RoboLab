@@ -25,6 +25,19 @@ textures are stored under `usd/`.
 Variant sets on the root prim (defaults in bold): Physics (**physx**,
 physics, none, mujoco), Robot (**none**, robot), Sensor (**none**, sensors).
 
+## Fingertip contact regions
+
+The fingertip collision regions are synced from upstream commit
+`46c0b7447edc8254e8b44dd669df86fb6985d876` (PR #6). Each finger has two
+1 mm inner pads with static/dynamic friction `1.5/1.5` and three outer shell
+pieces with `0.3/0.2`, all with zero restitution. The pads cover the full inner
+faces and preserve the original collision envelope and gripper opening.
+
+Only the fingertip collisions and materials are updated from that commit;
+the rest of this USD snapshot retains its existing RoboLab configuration.
+Regenerate the contact meshes with the upstream
+`scripts/build_finger_contact_regions.py` when needed.
+
 ## LICENSE
 
 This software is licensed under the Apache License 2.0. See `LICENSE` for details.
